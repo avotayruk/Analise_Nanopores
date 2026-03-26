@@ -170,6 +170,21 @@ def filtering(raw_events, window, symmetry_ratio, n_points, delta_I, trigger_lin
     events = list(set(filtered_events))
     events.sort()
 
+    # ============================================
+    # --- 4. НОВЫЙ БЛОК: УДАЛЕНИЕ КОРОТКИХ СОБЫТИЙ (< 2 мс) ---
+    # ============================================
+    min_duration_ms = 2  # Минимальная длительность в мс
+    min_duration_points = int((min_duration_ms / 1000) / dt)  # Перевод в точки
+
+    long_events = []
+    for start, end in events:
+        duration_points = end - start + 1
+        if duration_points >= min_duration_points:
+            long_events.append((start, end))
+
+    events = long_events  # Обновляем список событий
+    # ============================================
+
     # --- подсчёт ---
     negative_count = 0
     positive_count = 0
