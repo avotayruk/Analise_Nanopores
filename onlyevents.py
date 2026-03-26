@@ -33,6 +33,7 @@ from defs import calculation_one
 from defs import calculation_both
 from defs import save_summary_excel
 from defs import save_raw_events_excel
+from defs import save_full_signal_csv
 
 from matplotlib.ticker import MultipleLocator
 import openpyxl
@@ -60,6 +61,7 @@ def get_parameters_gui():
             result['polyorder'] = int(polyorder.get())
             result['METOD'] = METOD.get().strip()
             result['positive_events'] = positive_events_var.get()
+            result['save_full_signal'] = save_full_signal_var.get()  # <-- Новое поле
         except ValueError:
             messagebox.showerror("Ошибка", "Ну чтото не так")
             return
@@ -68,7 +70,7 @@ def get_parameters_gui():
 
     root = tk.Tk()
     root.title("Параметры анализа нанопорного сигнала")
-    root.geometry("420x400")
+    root.geometry("420x420")
     root.resizable(False, False)
 
     frame = tk.Frame(root, padx=15, pady=15)
@@ -136,15 +138,20 @@ def get_parameters_gui():
     METOD.insert(0, "SG и EMA")
     METOD.grid(row=14, column=1)
 
+
     tk.Label(frame, text="Считать положительные события?").grid(row=15, column=0, sticky="w")
     positive_events_var = tk.IntVar()
     positive_events_cb = tk.Checkbutton(frame, variable=positive_events_var, onvalue=1, offvalue=0)
     positive_events_cb.grid(row=15, column=1, sticky="w")
 
+    tk.Label(frame, text="Скачать полный обработанный сигнал?").grid(row=16, column=0, sticky="w")
+    save_full_signal_var = tk.IntVar()
+    save_full_signal_cb = tk.Checkbutton(frame, variable=save_full_signal_var, onvalue=1, offvalue=0)
+    save_full_signal_cb.grid(row=16, column=1, sticky="w")
 
 
     tk.Button(frame, text="Run analysis", command=on_run, width=20)\
-        .grid(row=17, column=0, columnspan=2, pady=20)
+        .grid(row=18, column=0, columnspan=2, pady=20)
     root.bind('<Return>', lambda event: on_run())
 
 
@@ -166,9 +173,10 @@ def get_parameters_gui():
         result['subsample'],
         result['event_buffer'],
         result['METOD'],
-        result['positive_events']
+        result['positive_events'],
+        result['save_full_signal']
     )
-filename, fs_khz, t_start, t_end, k, window_length, polyorder, a, subsample, event_buffer, METOD, positive_events = get_parameters_gui()
+filename, fs_khz, t_start, t_end, k, window_length, polyorder, a, subsample, event_buffer, METOD, positive_events, save_full_signal = get_parameters_gui()
 
 fs = fs_khz * 1e3           # Гц
 dt = 1.0 / fs               # шаг времени (с)
@@ -246,12 +254,6 @@ else:
 # =========================
 # 7. Визуализация сигнала
 # =========================
-
-
-
-# Получаем длительности событий в миллисекундах
-# Точечная диаграмма по амплитуде
-plt.figure(num='Распределение по амплитуде', figsize=(10, 5))
 
 if METOD in ["SG", "EMA"]:
 
@@ -561,7 +563,8 @@ params_df = pd.DataFrame({
         'Степень полинома',
         'Коэффициент a',
         "symetry ratio",
-        "окно для фильтрации"
+        "окно для фильтрации",
+        "среднее по току"
     ],
     'Значение': [
         filename,
@@ -573,61 +576,55 @@ params_df = pd.DataFrame({
         polyorder,
         a,
         symmetry_ratio,
-        window
+        window,
+        np.mean(values)
     ]
 })
 
-SG_table = pd.DataFrame(events_table_sorted)
-SG_table.columns = ['№', 'Время начала (с)', 'Длительность (мс)', 'Амплитуда, pA']
+table = pd.DataFrame(events_table_sorted)
+table.columns = ['№', 'Время начала (с)', 'Длительность (мс)', 'Амплитуда, pA']
 
-if METOD != "SG":
-    ema_table = pd.DataFrame(events_table_sorted)
+if METOD == "SG и EMA":
+    ema_table = pd.DataFrame(ema_events_table_sorted)
     ema_table.columns = ['№', 'Время начала (с)', 'Длительность (мс)', 'Амплитуда, pA']
 
-if METOD == "SG":
+if METOD in ["SG", "EMA"]:
+
+    print('Начинаю сохранять файлы')
 
     # 1 файл (сводка)
     save_summary_excel(
-        f"{filename}_SG_{fs_khz}kHz_summary.xlsx",
+        f"{filename}_{METOD}_{fs_khz}kHz_{len(filtered_events)}events.xlsx",
         params_df,
-        {"События SG": SG_table}
+        {f"События {METOD}": table}
+
     )
+    print('Файл с данными сохранен')
 
     # 2 файл (сырые события)
     save_raw_events_excel(
-        f"{filename}_SG_{fs_khz}kHz_raw.xlsx",
+        f"{filename}_{METOD}_{fs_khz}kHz_raw.xlsx",
         params_df,
-        {"События SG": (filtered_events, delta_I)},
+        {f"События {METOD}": (filtered_events, delta_I)},
         time, event_buffer, n_points
     )
+    print("Файл всех точек событий сохранен")
 
-elif METOD == "EMA":
-
-    save_summary_excel(
-        f"{filename}_EMA_{fs_khz}kHz_summary.xlsx",
-        params_df,
-        {"События EMA": ema_table}
-    )
-
-    save_raw_events_excel(
-        f"{filename}_EMA_{fs_khz}kHz_raw.xlsx",
-        params_df,
-        {"События EMA": (filtered_events, delta_I)},
-        time, event_buffer, n_points
-    )
 
 
 elif METOD == "SG и EMA":
+    print('Начинаю сохранять файлы')
 
     # 1 файл — ОБЕ ТАБЛИЦЫ
     save_summary_excel(
         f"{filename}_{fs_khz}kHz_summary.xlsx",
         params_df,
         {
-            "События SG": SG_table,
+            "События SG": table,
             "События EMA": ema_table
         }
     )
+    print('Файл с данными сохранен')
 
     # 2 файл — ВСЕ СИГНАЛЫ
     save_raw_events_excel(
@@ -639,7 +636,32 @@ elif METOD == "SG и EMA":
         },
         time, event_buffer, n_points
     )
+    print("Файл всех точек событий сохранен")
 
+# =========================
+# 8. Сохранение полного сигнала (если выбрана галочка)
+# =========================
+if save_full_signal == 1:
+    print("Сохранение полного обработанного сигнала...")
+
+    base_filename = f"{filename}_{fs_khz}kHz_FULL_SIGNAL.csv"
+
+    if METOD == "SG и EMA":
+        save_full_signal_csv(
+            base_filename,
+            time,
+            delta_I,
+            ema_delta_I=ema_delta_I
+        )
+    else:
+        save_full_signal_csv(
+            base_filename,
+            time,
+            delta_I,
+            ema_delta_I=None
+        )
+
+    print("Полный сигнал сохранен.")
 
 #pyinstaller --onefile onlyevents.py
 

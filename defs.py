@@ -367,3 +367,30 @@ def save_raw_events_excel(filename, params_df, data_dict, time, event_buffer, n_
         for sheet_name, (events, signal) in data_dict.items():
             df = create_event_table(events, signal)
             df.to_excel(writer, sheet_name=sheet_name, index=False)
+
+
+def save_full_signal_csv(filename, time, delta_I, ema_delta_I=None):
+    """
+    Сохраняет полный обработанный сигнал в CSV.
+    Если ema_delta_I передан, создаются 2 файла: signal_SG.csv и signal_EMA.csv
+    """
+    import csv
+
+    # Сохраняем SG сигнал (всегда)
+    sg_filename = filename.replace('.csv', '_SG.csv')
+    with open(sg_filename, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(['Time (s)', 'Delta_I_SG (pA)'])
+        for t, d in zip(time, delta_I):
+            writer.writerow([t, d])
+    print(f"Сохранено: {sg_filename}")
+
+    # Сохраняем EMA сигнал (если есть)
+    if ema_delta_I is not None:
+        ema_filename = filename.replace('.csv', '_EMA.csv')
+        with open(ema_filename, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(['Time (s)', 'Delta_I_EMA (pA)'])
+            for t, d in zip(time, ema_delta_I):
+                writer.writerow([t, d])
+        print(f"Сохранено: {ema_filename}")
