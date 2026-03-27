@@ -22,6 +22,7 @@ from matplotlib.lines import Line2D
 import tkinter as tk
 from tkinter import messagebox
 import pandas as pd
+from tkinter import filedialog
 
 from defs import calculate_triggers
 from defs import EMA_calculate_baseline
@@ -56,7 +57,7 @@ def get_parameters_gui():
             result['event_buffer'] = int(entry_event_buffer.get())
             result['t_start'] = float(entry_t_start.get())
             result['t_end'] = float(entry_t_end.get())
-            result['filename'] = filename.get().strip()
+            result['filename'] = filename_var.get().strip()
             result['window_length'] = int(window_length.get())
             result['polyorder'] = int(polyorder.get())
             result['METOD'] = METOD.get().strip()
@@ -70,7 +71,7 @@ def get_parameters_gui():
 
     root = tk.Tk()
     root.title("Параметры анализа нанопорного сигнала")
-    root.geometry("420x420")
+    root.geometry("500x420")
     root.resizable(False, False)
 
     frame = tk.Frame(root, padx=15, pady=15)
@@ -78,10 +79,25 @@ def get_parameters_gui():
 
     tk.Label(frame, text="Характеристики эксперимента").grid(row=0, column=0, sticky="w")
 
-    tk.Label(frame, text="Имя файла (пример: GD.txt)").grid(row=1, column=0, sticky="w")
-    filename = tk.Entry(frame, width=15)
-    filename.insert(0, "0DNA500bp.txt")
-    filename.grid(row=1, column=1)
+    tk.Label(frame, text="Файл с данными:").grid(row=1, column=0, sticky="w")
+
+    filename_var = tk.StringVar()
+    filename_var.set("0DNA500bp.txt")  # Значение по умолчанию
+
+    filename_entry = tk.Entry(frame, textvariable=filename_var, width=25)
+    filename_entry.grid(row=1, column=1, padx=5)
+
+    def browse_file():
+        file_path = filedialog.askopenfilename(
+            title="Выберите файл с данными",
+            filetypes=[("Текстовые файлы", "*.txt"), ("Все файлы", "*.*")],
+            initialdir=os.path.dirname(os.path.abspath(__file__))  # Открывает папку со скриптом
+        )
+        if file_path:
+            filename_var.set(file_path)
+
+    browse_btn = tk.Button(frame, text="Обзор...", command=browse_file, width=8)
+    browse_btn.grid(row=1, column=2, padx=5)
 
     tk.Label(frame, text="Частота дискретизации (кГц):").grid(row=2, column=0, sticky="w")
     entry_fs = tk.Entry(frame, width=15)
