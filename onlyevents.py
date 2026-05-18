@@ -62,7 +62,12 @@ def get_parameters_gui():
             result['polyorder'] = int(polyorder.get())
             result['METOD'] = METOD.get().strip()
             result['positive_events'] = positive_events_var.get()
-            result['save_full_signal'] = save_full_signal_var.get()  # <-- Новое поле
+            result['save_full_signal'] = save_full_signal_var.get()
+            # Новые параметры
+            result['adaptive_trigger'] = adaptive_trigger_var.get()
+            w_coeff = float(entry_weight_coeff.get())
+            result['weight_coeff'] = max(1.0, min(3.0, w_coeff))  # Ограничение 1.0 - 3.0
+            # <-- Новое поле
         except ValueError:
             messagebox.showerror("Ошибка", "Ну чтото не так")
             return
@@ -71,7 +76,7 @@ def get_parameters_gui():
 
     root = tk.Tk()
     root.title("Параметры анализа нанопорного сигнала")
-    root.geometry("500x420")
+    root.geometry("500x460")
     root.resizable(False, False)
 
     frame = tk.Frame(root, padx=15, pady=15)
@@ -165,9 +170,17 @@ def get_parameters_gui():
     save_full_signal_cb = tk.Checkbutton(frame, variable=save_full_signal_var, onvalue=1, offvalue=0)
     save_full_signal_cb.grid(row=16, column=1, sticky="w")
 
+    tk.Label(frame, text="Адаптивный триггер?").grid(row=17, column=0, sticky="w")
+    adaptive_trigger_var = tk.IntVar()
+    tk.Checkbutton(frame, variable=adaptive_trigger_var, onvalue=1, offvalue=0).grid(row=17, column=1, sticky="w")
+
+    tk.Label(frame, text="Взвешивающий коэфф. (1.0-3.0):").grid(row=18, column=0, sticky="w")
+    entry_weight_coeff = tk.Entry(frame, width=15)
+    entry_weight_coeff.insert(0, "1.0")
+    entry_weight_coeff.grid(row=18, column=1)
 
     tk.Button(frame, text="Run analysis", command=on_run, width=20)\
-        .grid(row=18, column=0, columnspan=2, pady=20)
+        .grid(row=20, column=0, columnspan=2, pady=20)
     root.bind('<Return>', lambda event: on_run())
 
 
@@ -190,9 +203,11 @@ def get_parameters_gui():
         result['event_buffer'],
         result['METOD'],
         result['positive_events'],
-        result['save_full_signal']
+        result['save_full_signal'],
+        bool(result['adaptive_trigger']),
+        result['weight_coeff']
     )
-filename, fs_khz, t_start, t_end, k, window_length, polyorder, a, subsample, event_buffer, METOD, positive_events, save_full_signal = get_parameters_gui()
+filename, fs_khz, t_start, t_end, k, window_length, polyorder, a, subsample, event_buffer, METOD, positive_events, save_full_signal, adaptive_trigger, weight_coeff = get_parameters_gui()
 
 fs = fs_khz * 1e3           # Гц
 dt = 1.0 / fs               # шаг времени (с)
@@ -233,7 +248,7 @@ if METOD in ["SG", "EMA"]:
      filtered_events, negative_count, positive_count, delta_I) = calculation_one(values, a,
                                                                         k, positive_events, n_points, window,
                                                                         symmetry_ratio, dt, METOD,
-                                                                        window_length, polyorder)
+                                                                        window_length, polyorder, adaptive_trigger=adaptive_trigger, weight_coeff=weight_coeff)
 else:
     time_ema = time
     values_ema = values
@@ -242,7 +257,7 @@ else:
      ema_std_value, ema_trigger_line, ema_trigger, ema_raw_events,
      ema_filtered_events, ema_negative_count, ema_positive_count, delta_I, ema_delta_I) = calculation_both(values, k, positive_events,
                                                                                      n_points, window, symmetry_ratio,
-                                                                                     dt, METOD, values_ema, a, window_length, polyorder)
+                                                                                     dt, METOD, values_ema, a, window_length, polyorder, adaptive_trigger=adaptive_trigger, weight_coeff=weight_coeff)
 
 
 #===============================================================================
@@ -398,13 +413,13 @@ if METOD in ["SG", "EMA"]:
         legend_elements = [
             Patch(facecolor='blue', alpha=0.3, label=f'{METOD} отрицательные'),
             Patch(facecolor='red', alpha=0.3, label=f'{METOD} положительные'),
-            Line2D([0], [0], color='blue', linestyle='--', label=f'Trigger {METOD} = {trigger_line:.6f}'),
+            # Line2D([0], [0], color='blue', linestyle='--', label=f'Trigger {METOD} = {trigger_line:.6f}'),
             Line2D([0], [0], color='lightblue', linestyle='-', label=f'{METOD} (каждая {subsample}-я точка)')
 
         ]
 
-    plt.axhline(trigger_line, color='blue', linestyle='--')
-    plt.axhline(trigger, color='blue', linestyle='--')
+    #plt.axhline(trigger_line, color='blue', linestyle='--')
+    #plt.axhline(trigger, color='blue', linestyle='--')
 #
 # if METOD == "EMA":
 #
@@ -464,16 +479,52 @@ if METOD in ["SG", "EMA"]:
         plt.plot(time[seg_start:seg_end + 1], delta_I[seg_start:seg_end + 1],
                  color=color, alpha=0.8, linewidth=0.8)
 
+        # legend_elements = [
+        #     Patch(facecolor='blue', alpha=0.3, label=f'{METOD} отрицательные'),
+        #     Patch(facecolor='orange', alpha=0.3, label=f'{METOD} положительные'),
+        #     Line2D([0], [0], color='blue', linestyle='--', label=f'Trigger {METOD} = {trigger_line:.6f}'),
+        #     Line2D([0], [0], color='lightblue', linestyle='-', label=f'{METOD} (каждая {subsample}-я точка)'),
+        #
+        # ]
+
+
+    def plot_triggers_and_label(t_line, t_high, metod_name, sub, color='blue'):
+        """Автоматически выбирает тип отрисовки и формирует подпись"""
+        if isinstance(t_line, np.ndarray):
+            # Адаптивный режим: рисуем линию вдоль времени (прореживаем для скорости)
+            plt.plot(time[::sub], t_line[::sub], color=color, linestyle='--', alpha=0.6, linewidth=1)
+            plt.plot(time[::sub], t_high[::sub], color=color, linestyle='--', alpha=0.6, linewidth=1)
+            return f'Адаптивный Trigger {metod_name} (±k·σ_loc)'
+        else:
+            # Фиксированный режим: горизонтальная линия
+            plt.axhline(t_line, color=color, linestyle='--', alpha=0.6)
+            plt.axhline(t_high, color=color, linestyle='--', alpha=0.6)
+            return f'Trigger {metod_name} = {t_line:.6f}'
+
+
+    if METOD in ["SG", "EMA"]:
+        trig_label = plot_triggers_and_label(trigger_line, trigger, METOD, subsample, color='blue')
         legend_elements = [
             Patch(facecolor='blue', alpha=0.3, label=f'{METOD} отрицательные'),
-            Patch(facecolor='orange', alpha=0.3, label=f'{METOD} положительные'),
-            Line2D([0], [0], color='blue', linestyle='--', label=f'Trigger {METOD} = {trigger_line:.6f}'),
-            Line2D([0], [0], color='lightblue', linestyle='-', label=f'{METOD} (каждая {subsample}-я точка)'),
-
+            Patch(facecolor='red', alpha=0.3, label=f'{METOD} положительные'),
+            Line2D([0], [0], color='blue', linestyle='--', label=trig_label),
+            Line2D([0], [0], color='lightblue', linestyle='-', label=f'{METOD} (каждая {subsample}-я точка)')
+        ]
+    else:  # SG и EMA
+        trig_label_sg = plot_triggers_and_label(trigger_line, trigger, "SG", subsample, color='blue')
+        trig_label_ema = plot_triggers_and_label(ema_trigger_line, ema_trigger, "EMA", subsample, color='red')
+        legend_elements = [
+            Patch(facecolor='blue', alpha=0.3, label='SG отрицательные'),
+            Patch(facecolor='red', alpha=0.3, label='SG положительные'),
+            Patch(facecolor='orange', alpha=0.3, label='EMA положительные'),
+            Line2D([0], [0], color='blue', linestyle='--', label=trig_label_sg),
+            Line2D([0], [0], color='red', linestyle='--', label=trig_label_ema),
+            Line2D([0], [0], color='lightblue', linestyle='-', label=f'SG (каждая {subsample}-я точка)'),
+            Line2D([0], [0], color='yellow', linestyle='-', label=f'EMA (каждая {subsample}-я точка)')
         ]
 
-    plt.axhline(trigger_line, color='blue', linestyle='--')
-    plt.axhline(trigger, color='blue', linestyle='--')
+    # Отрисовка легенды один раз, после всех событий
+    plt.legend(handles=legend_elements, loc='upper right')
 
 
     # Затем SG события

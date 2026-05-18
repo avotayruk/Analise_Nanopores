@@ -2,6 +2,7 @@ import numpy as np
 from openpyxl import Workbook
 from scipy.signal import savgol_filter
 import pandas as pd
+from scipy.ndimage import uniform_filter1d
 
 
 # считает базовую
@@ -71,10 +72,20 @@ def calculate_detecting_all(delta_I, trigger_line, trigger, n_points):
 
     return raw_events
 
+def calculate_adaptive_triggers(delta_I, k, window_pts=50000):
+    """
+    Возвращает массивы trigger_line и trigger, меняющиеся в каждой точке.
+    Оценивает локальное СКО через скользящее среднее квадратов.
+    """
+    local_mean_sq = uniform_filter1d(delta_I**2, size=window_pts, mode='nearest')
+    local_std = np.sqrt(np.maximum(local_mean_sq, 1e-12))  # защита от отрицательных значений из-за float
+    trigger_line = -k * local_std
+    trigger = k * local_std
+    return local_std, trigger_line, trigger
 
-def filtering(raw_events, window, symmetry_ratio, n_points, delta_I, trigger_line, trigger, dt):
 
-    # --- параметры расстояний ---
+
+def filtering(raw_events, window, symmetry_ratio, n_points, delta_I, trigger_line, trigger, dt, weight_coeff=1.0, adaptive_trigger=False):
     min_distance_ms2 = 50
     min_distance_ms1 = 5
     min_distance_points2 = int((min_distance_ms2 / 1000) / dt)
@@ -82,119 +93,90 @@ def filtering(raw_events, window, symmetry_ratio, n_points, delta_I, trigger_lin
 
     raw_events_sorted = sorted(raw_events)
 
-    # --- 1. КЛАСТЕРИЗАЦИЯ (фильтр по расстоянию) ---
-    clusters = []
-    current_cluster = [raw_events_sorted[0]]
-
-    for i in range(1, len(raw_events_sorted)):
-        start2, end2 = raw_events_sorted[i]
-        start1, end1 = current_cluster[-1]
-
-        distance = start2 - end1
-
-        if min_distance_points1 < distance < min_distance_points2:
-            current_cluster.append((start2, end2))
-        else:
-            clusters.append(current_cluster)
-            current_cluster = [(start2, end2)]
-
-    clusters.append(current_cluster)
-
-    clean_raw_events = [cluster[0] for cluster in clusters if len(cluster) == 1]
+    # # --- 1. КЛАСТЕРИЗАЦИЯ ---
+    # clusters = []
+    # current_cluster = [raw_events_sorted[0]]
+    # for i in range(1, len(raw_events_sorted)):
+    #     start2, end2 = raw_events_sorted[i]
+    #     start1, end1 = current_cluster[-1]
+    #     distance = start2 - end1
+    #     if min_distance_points1 < distance < min_distance_points2:
+    #         current_cluster.append((start2, end2))
+    #     else:
+    #         clusters.append(current_cluster)
+    #         current_cluster = [(start2, end2)]
+    # clusters.append(current_cluster)
+    # clean_raw_events = [cluster[0] for cluster in clusters if len(cluster) == 1]
 
     # --- 2. РАСШИРЕНИЕ ДО BASELINE ---
     expanded_events = []
-
-    for start, end in clean_raw_events:
-
+    for start, end in raw_events:
         event_segment = delta_I[start:end + 1]
         event_mean = np.mean(event_segment)
-
-        # --- отрицательное ---
         if event_mean < 0:
             i = start
-            while i > 0 and delta_I[i] < 0:
-                i -= 1
+            while i > 0 and delta_I[i] < 0: i -= 1
             new_start = i + 1
-
             i = end
-            while i < n_points - 1 and delta_I[i] < 0:
-                i += 1
+            while i < n_points - 1 and delta_I[i] < 0: i += 1
             new_end = i - 1
-
-        # --- положительное ---
         else:
             i = start
-            while i > 0 and delta_I[i] > 0:
-                i -= 1
+            while i > 0 and delta_I[i] > 0: i -= 1
             new_start = i + 1
-
             i = end
-            while i < n_points - 1 and delta_I[i] > 0:
-                i += 1
+            while i < n_points - 1 and delta_I[i] > 0: i += 1
             new_end = i - 1
-
         expanded_events.append((new_start, new_end))
 
-    # --- 3. ПРОВЕРКА СИММЕТРИИ (уже после расширения!) ---
+    # --- 3. ВЗВЕШЕННАЯ ПРОВЕРКА СИММЕТРИИ ---
     filtered_events = []
-
     for start, end in expanded_events:
-
-        # окно теперь вокруг ВСЕГО события
         w_start = max(0, start - window)
         w_end = min(n_points - 1, end + window)
 
         segment = delta_I[w_start:w_end + 1]
         event = delta_I[start:end + 1]
-
         event_mean = np.mean(event)
 
-        # --- отрицательное событие ---
+        # Индексы события внутри сегмента
+        s_in = start - w_start
+        e_in = end - w_start
+
+        # Расчет весовых коэффициентов (1.0 в центре -> weight_coeff на краях)
+        if weight_coeff > 1.0:
+            n_seg = len(segment)
+            center = (s_in + e_in) / 2.0
+            dist = np.abs(np.arange(n_seg) - center)
+            max_dist = max(center, n_seg - 1 - center)
+            weights = 1.0 + (weight_coeff - 1.0) * (dist / max_dist) if max_dist > 0 else np.ones(n_seg)
+        else:
+            weights = np.ones(len(segment))
+
         if event_mean < 0:
             neg_peak = np.min(event)
-            pos_peak = np.max(segment)
-
-            if abs(pos_peak) < symmetry_ratio * abs(neg_peak):
+            pos_mask = segment > 0
+            max_pos = np.max(segment[pos_mask] * weights[pos_mask]) if np.any(pos_mask) else 0.0
+            if max_pos < symmetry_ratio * abs(neg_peak):
                 filtered_events.append((start, end))
-
-        # --- положительное событие ---
         else:
-            neg_peak = np.min(segment)
             pos_peak = np.max(event)
-
-            if abs(neg_peak) < symmetry_ratio * abs(pos_peak):
+            neg_mask = segment < 0
+            max_neg = np.max(np.abs(segment[neg_mask]) * weights[neg_mask]) if np.any(neg_mask) else 0.0
+            if max_neg < symmetry_ratio * abs(pos_peak):
                 filtered_events.append((start, end))
 
-    # --- удаление дублей ---
-    events = list(set(filtered_events))
-    events.sort()
+    # --- Удаление дублей ---
+    events = sorted(list(set(filtered_events)))
 
-    # ============================================
-    # --- 4. НОВЫЙ БЛОК: УДАЛЕНИЕ КОРОТКИХ СОБЫТИЙ (< 2 мс) ---
-    # ============================================
-    min_duration_ms = 2  # Минимальная длительность в мс
-    min_duration_points = int((min_duration_ms / 1000) / dt)  # Перевод в точки
+    # --- 4. МИНИМАЛЬНАЯ ДЛИТЕЛЬНОСТЬ ---
+    min_duration_ms = 0.05
+    min_duration_points = int((min_duration_ms / 1000) / dt)
+    events = [(s, e) for s, e in events if (e - s + 1) >= min_duration_points]
 
-    long_events = []
-    for start, end in events:
-        duration_points = end - start + 1
-        if duration_points >= min_duration_points:
-            long_events.append((start, end))
-
-    events = long_events  # Обновляем список событий
-    # ============================================
-
-    # --- подсчёт ---
-    negative_count = 0
-    positive_count = 0
-
-    for start, end in events:
-        segment = delta_I[start:end + 1]
-        if np.mean(segment) < 0:
-            negative_count += 1
-        else:
-            positive_count += 1
+    # --- Подсчет ---
+    negative_count = sum(1 for s, e in events if np.mean(delta_I[s:e+1]) < 0)
+    positive_count = len(events) - negative_count
 
     return events, negative_count, positive_count
 
@@ -241,103 +223,74 @@ def count_events_by_sign(events, delta_I):
     return positive_count, negative_count
 
 
-def calculation_one(values, a, k, positive_events, n_points, window, symmetry_ratio, dt, METOD, window_length, polyorder):
-
+def calculation_one(values, a, k, positive_events, n_points, window, symmetry_ratio, dt, METOD, window_length, polyorder, adaptive_trigger=False, weight_coeff=1.0):
     if METOD == "EMA":
         delta_I = EMA_calculate_baseline(n_points, values, a)
-
-    if METOD == "SG":
-        m = np.zeros_like(values)
+    else:
         m = savgol_filter(values, window_length, polyorder, mode="mirror")
         delta_I = values - m
 
-    std_value, trigger_line, trigger = calculate_triggers(delta_I, k)
+    if adaptive_trigger:
+        std_arr, trigger_line, trigger = calculate_adaptive_triggers(delta_I, k, window_pts=50000)
+        global_std = np.std(delta_I)  # для вывода в консоль
+        print(f"для {METOD} (адаптивный) Глобальное СКО = {global_std:.6f}")
+    else:
+        std_arr, trigger_line, trigger = calculate_triggers(delta_I, k)
+        global_std = std_arr
 
-    print(f"для {METOD} СКО участка = {std_value:.6f}")
-    print(f"ДЛЯ {METOD} Trigger level = {trigger_line:.6f}")
+    print(f"ДЛЯ {METOD} Trigger level (средний) = {np.mean(trigger_line) if adaptive_trigger else trigger_line:.6f}")
 
     if positive_events == 1:
-        # Если галочка нажата - вызываем функцию для всех событий (сверху и снизу)
         raw_events = calculate_detecting_all(delta_I, trigger_line, trigger, n_points)
     else:
-        # Если галочка не нажата - вызываем старую функцию только для нижних событий
         raw_events = calculate_detecting_down(delta_I, trigger_line, n_points)
 
-        print(f"ДЛЯ {METOD} Найдено событий до фильтрации : {len(raw_events)}")
-    filtered_events, negative_count, positive_count = filtering(raw_events, window, symmetry_ratio, n_points,
-                                                                    delta_I,
-                                                                    trigger_line, trigger, dt)
+    print(f"ДЛЯ {METOD} Найдено событий до фильтрации : {len(raw_events)}")
 
-    if positive_events == 1:
-        print(f"ДЛЯ {METOD} Событий после фильтрации: {len(filtered_events)}")
-        print(f"ДЛЯ {METOD} Событий отрицательных: {negative_count}")
-        print(f"ДЛЯ {METOD} Событий положительных: {positive_count}")
+    filtered_events, negative_count, positive_count = filtering(
+        raw_events, window, symmetry_ratio, n_points, delta_I, trigger_line, trigger, dt,
+        weight_coeff=weight_coeff, adaptive_trigger=adaptive_trigger
+    )
+
+    print(f"ДЛЯ {METOD} Событий после фильтрации: {len(filtered_events)}")
+    return global_std, trigger_line, trigger, raw_events, filtered_events, negative_count, positive_count, delta_I
+
+
+def calculation_both(values, k, positive_events, n_points, window, symmetry_ratio, dt, METOD, values_ema, a, window_length, polyorder, adaptive_trigger=False, weight_coeff=1.0):
+    # EMA часть
+    ema_delta_I = EMA_calculate_baseline(n_points, values_ema, a)
+    if adaptive_trigger:
+        ema_std_arr, ema_trigger_line, ema_trigger = calculate_adaptive_triggers(ema_delta_I, k, window_pts=50000)
+        print(f"для ЕМА (адаптивный) Глобальное СКО = {np.std(ema_delta_I):.6f}")
     else:
-        print(f"ДЛЯ {METOD} Событий после фильтрации: {len(filtered_events)}")
+        ema_std_arr, ema_trigger_line, ema_trigger = calculate_triggers(ema_delta_I, k)
 
-    return std_value, trigger_line, trigger, raw_events, filtered_events, negative_count, positive_count, delta_I
+    ema_raw_events = calculate_detecting_all(ema_delta_I, ema_trigger_line, ema_trigger, n_points) if positive_events else calculate_detecting_down(ema_delta_I, ema_trigger_line, n_points)
+    print(f"ДЛЯ EMA Найдено событий до фильтрации : {len(ema_raw_events)}")
+    ema_filtered_events, ema_negative_count, ema_positive_count = filtering(
+        ema_raw_events, window, symmetry_ratio, n_points, ema_delta_I, ema_trigger_line, ema_trigger, dt,
+        weight_coeff=weight_coeff, adaptive_trigger=adaptive_trigger
+    )
 
-
-def calculation_both(values, k, positive_events, n_points, window, symmetry_ratio, dt, METOD, values_ema, a, window_length, polyorder):
-    if METOD == "SG и EMA":
-        m = np.zeros_like(values)
-        m = savgol_filter(values, window_length, polyorder, mode="mirror")
-        delta_I = values - m
-
-        ema_delta_I = EMA_calculate_baseline(n_points, values_ema, a)
-        ema_std_value, ema_trigger_line, ema_trigger = calculate_triggers(ema_delta_I, k)
-
-        print(f"для ЕМА СКО участка = {ema_std_value:.6f}")
-        print(f"ДЛЯ ЕМА Trigger level = {ema_trigger_line:.6f}")
-
-        if positive_events == 1:
-            # Если галочка нажата - вызываем функцию для всех событий (сверху и снизу)
-            ema_raw_events = calculate_detecting_all(ema_delta_I, ema_trigger_line, ema_trigger, n_points)
-        else:
-            # Если галочка не нажата - вызываем старую функцию только для нижних событий
-            ema_raw_events = calculate_detecting_down(ema_delta_I, ema_trigger_line, n_points)
-
-        print(f"ДЛЯ EMA Найдено событий до фильтрации : {len(ema_raw_events)}")
-        ema_filtered_events, ema_negative_count, ema_positive_count = filtering(ema_raw_events, window, symmetry_ratio,
-                                                                                n_points, ema_delta_I, ema_trigger_line,
-                                                                                ema_trigger, dt)
-
-        if positive_events == 1:
-            print(f"ДЛЯ ЕМА Событий после фильтрации: {len(ema_filtered_events)}")
-            print(f"ДЛЯ ЕМА Событий отрицательных: {ema_negative_count}")
-            print(f"ДЛЯ ЕМА Событий положительных: {ema_positive_count}")
-        else:
-            print(f"ДЛЯ ЕМА Событий после фильтрации: {len(ema_filtered_events)}")
-
-
-    std_value, trigger_line, trigger = calculate_triggers(delta_I, k)
-
-    print(f"для SG СКО участка = {std_value:.6f}")
-    print(f"ДЛЯ SG Trigger level = {trigger_line:.6f}")
-
-    if positive_events == 1:
-        # Если галочка нажата - вызываем функцию для всех событий (сверху и снизу)
-        raw_events = calculate_detecting_all(delta_I, trigger_line, trigger, n_points)
+    # SG часть
+    m = savgol_filter(values, window_length, polyorder, mode="mirror")
+    delta_I = values - m
+    if adaptive_trigger:
+        std_arr, trigger_line, trigger = calculate_adaptive_triggers(delta_I, k, window_pts=50000)
+        print(f"для SG (адаптивный) Глобальное СКО = {np.std(delta_I):.6f}")
     else:
-        # Если галочка не нажата - вызываем старую функцию только для нижних событий
-        raw_events = calculate_detecting_down(delta_I, trigger_line, n_points)
+        std_arr, trigger_line, trigger = calculate_triggers(delta_I, k)
 
-        print(f"ДЛЯ SG Найдено событий до фильтрации : {len(raw_events)}")
-    filtered_events, negative_count, positive_count = filtering(raw_events, window, symmetry_ratio, n_points, delta_I,
-                                                                trigger_line, trigger, dt)
+    raw_events = calculate_detecting_all(delta_I, trigger_line, trigger, n_points) if positive_events else calculate_detecting_down(delta_I, trigger_line, n_points)
+    print(f"ДЛЯ SG Найдено событий до фильтрации : {len(raw_events)}")
+    filtered_events, negative_count, positive_count = filtering(
+        raw_events, window, symmetry_ratio, n_points, delta_I, trigger_line, trigger, dt,
+        weight_coeff=weight_coeff, adaptive_trigger=adaptive_trigger
+    )
 
-    if positive_events == 1:
-        print(f"ДЛЯ SG Событий после фильтрации: {len(filtered_events)}")
-        print(f"ДЛЯ SG Событий отрицательных: {negative_count}")
-        print(f"ДЛЯ SG Событий положительных: {positive_count}")
-    else:
-        print(f"ДЛЯ SG Событий после фильтрации: {len(filtered_events)}")
+    return (np.std(delta_I), trigger_line, trigger, raw_events, filtered_events, negative_count, positive_count,
+            np.std(ema_delta_I), ema_trigger_line, ema_trigger, ema_raw_events, ema_filtered_events, ema_negative_count, ema_positive_count, delta_I, ema_delta_I)
 
-
-    return (std_value, trigger_line, trigger, raw_events,
-            filtered_events, negative_count, positive_count,
-            ema_std_value, ema_trigger_line, ema_trigger, ema_raw_events,
-            ema_filtered_events, ema_negative_count, ema_positive_count, delta_I, ema_delta_I)
 
 def save_summary_excel(filename, params_df, tables_dict):
     """
