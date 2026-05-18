@@ -137,34 +137,46 @@ def filtering(raw_events, window, symmetry_ratio, n_points, delta_I, trigger_lin
 
         segment = delta_I[w_start:w_end + 1]
         event = delta_I[start:end + 1]
-        event_mean = np.mean(event)
 
-        # Индексы события внутри сегмента
+        # 1. Локальная базовая линия (event_buffer)
+        # Рекомендация: считать baseline без самой области события, чтобы не было смещения
+        left_ctx = segment[:start - w_start]
+        right_ctx = segment[end - w_start + 1:]
+        context = np.concatenate([left_ctx, right_ctx])
+        buffer_mean = np.mean(context) if len(context) > 0 else np.mean(segment)
+
+        # Переводим в отклонения от локальной baseline
+        dev_segment = segment - buffer_mean
+        dev_event = event - buffer_mean
+        event_dev_mean = np.mean(dev_event)
+
+        # 2. Веса (без изменений, применяются к dev_segment)
         s_in = start - w_start
         e_in = end - w_start
+        n_seg = len(dev_segment)  # <-- ИСПРАВЛЕНО: вынесено до if/else
 
-        # Расчет весовых коэффициентов (1.0 в центре -> weight_coeff на краях)
         if weight_coeff > 1.0:
-            n_seg = len(segment)
             center = (s_in + e_in) / 2.0
             dist = np.abs(np.arange(n_seg) - center)
             max_dist = max(center, n_seg - 1 - center)
             weights = 1.0 + (weight_coeff - 1.0) * (dist / max_dist) if max_dist > 0 else np.ones(n_seg)
         else:
-            weights = np.ones(len(segment))
+            weights = np.ones(n_seg)
 
-        if event_mean < 0:
-            neg_peak = np.min(event)
-            pos_mask = segment > 0
-            max_pos = np.max(segment[pos_mask] * weights[pos_mask]) if np.any(pos_mask) else 0.0
-            if max_pos < symmetry_ratio * abs(neg_peak):
+        # 3. Проверка противоположного пика относительно buffer_mean
+        if event_dev_mean < 0:  # Событие отрицательное относительно локальной baseline
+            main_peak = abs(np.min(dev_event))
+            opp_mask = dev_segment > 0
+            max_opp = np.max(dev_segment[opp_mask] * weights[opp_mask]) if np.any(opp_mask) else 0.0
+            if max_opp < symmetry_ratio * main_peak:
                 filtered_events.append((start, end))
-        else:
-            pos_peak = np.max(event)
-            neg_mask = segment < 0
-            max_neg = np.max(np.abs(segment[neg_mask]) * weights[neg_mask]) if np.any(neg_mask) else 0.0
-            if max_neg < symmetry_ratio * abs(pos_peak):
+        else:  # Событие положительное
+            main_peak = np.max(dev_event)
+            opp_mask = dev_segment < 0
+            max_opp = np.max(np.abs(dev_segment[opp_mask]) * weights[opp_mask]) if np.any(opp_mask) else 0.0
+            if max_opp < symmetry_ratio * main_peak:
                 filtered_events.append((start, end))
+
 
     # --- Удаление дублей ---
     events = sorted(list(set(filtered_events)))

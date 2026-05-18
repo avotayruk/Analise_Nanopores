@@ -212,7 +212,7 @@ filename, fs_khz, t_start, t_end, k, window_length, polyorder, a, subsample, eve
 fs = fs_khz * 1e3           # Гц
 dt = 1.0 / fs               # шаг времени (с)
 window = 200
-symmetry_ratio = 0.5
+symmetry_ratio = 0.9
 
 
 with open(filename, 'r') as f:
@@ -572,51 +572,51 @@ plt.grid(True, which='minor', alpha=0.2)
 # =========================
 # ОКНО НАВИГАЦИИ (стабильная версия)
 # =========================
-
-fig = plt.gcf()
-ax = plt.gca()
-
-nav_root = tk.Tk()
-nav_root.title("Навигация по графику")
-nav_root.geometry("260x200")
-nav_root.resizable(False, False)
-
-tk.Label(nav_root, text="Время от (с)").grid(row=0, column=0)
-entry_xmin = tk.Entry(nav_root, width=12)
-entry_xmin.grid(row=0, column=1)
-
-tk.Label(nav_root, text="Врема до (с)").grid(row=1, column=0)
-entry_xmax = tk.Entry(nav_root, width=12)
-entry_xmax.grid(row=1, column=1)
-
-tk.Label(nav_root, text="Ток min").grid(row=2, column=0)
-entry_ymin = tk.Entry(nav_root, width=12)
-entry_ymin.grid(row=2, column=1)
-
-tk.Label(nav_root, text="Ток max").grid(row=3, column=0)
-entry_ymax = tk.Entry(nav_root, width=12)
-entry_ymax.grid(row=3, column=1)
-
-def apply_limits():
-    try:
-        xmin = float(entry_xmin.get())
-        xmax = float(entry_xmax.get())
-        ymin = float(entry_ymin.get())
-        ymax = float(entry_ymax.get())
-
-        ax.set_xlim(xmin, xmax)
-        ax.set_ylim(ymin, ymax)
-        fig.canvas.draw_idle()
-
-    except ValueError:
-        messagebox.showerror("Ошибка", "Введите числовые значения")
-
-tk.Button(nav_root, text="Применить", command=apply_limits)\
-    .grid(row=4, column=0, columnspan=2, pady=10)
-nav_root.bind('<Return>', lambda event: apply_limits())
-
-plt.show(block=False)
-nav_root.mainloop()
+#
+# fig = plt.gcf()
+# ax = plt.gca()
+#
+# nav_root = tk.Tk()
+# nav_root.title("Навигация по графику")
+# nav_root.geometry("260x200")
+# nav_root.resizable(False, False)
+#
+# tk.Label(nav_root, text="Время от (с)").grid(row=0, column=0)
+# entry_xmin = tk.Entry(nav_root, width=12)
+# entry_xmin.grid(row=0, column=1)
+#
+# tk.Label(nav_root, text="Врема до (с)").grid(row=1, column=0)
+# entry_xmax = tk.Entry(nav_root, width=12)
+# entry_xmax.grid(row=1, column=1)
+#
+# tk.Label(nav_root, text="Ток min").grid(row=2, column=0)
+# entry_ymin = tk.Entry(nav_root, width=12)
+# entry_ymin.grid(row=2, column=1)
+#
+# tk.Label(nav_root, text="Ток max").grid(row=3, column=0)
+# entry_ymax = tk.Entry(nav_root, width=12)
+# entry_ymax.grid(row=3, column=1)
+#
+# def apply_limits():
+#     try:
+#         xmin = float(entry_xmin.get())
+#         xmax = float(entry_xmax.get())
+#         ymin = float(entry_ymin.get())
+#         ymax = float(entry_ymax.get())
+#
+#         ax.set_xlim(xmin, xmax)
+#         ax.set_ylim(ymin, ymax)
+#         fig.canvas.draw_idle()
+#
+#     except ValueError:
+#         messagebox.showerror("Ошибка", "Введите числовые значения")
+#
+# tk.Button(nav_root, text="Применить", command=apply_limits)\
+#     .grid(row=4, column=0, columnspan=2, pady=10)
+# nav_root.bind('<Return>', lambda event: apply_limits())
+#
+# plt.show(block=False)
+# nav_root.mainloop()
 
 
 params_df = pd.DataFrame({
