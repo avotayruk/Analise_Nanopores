@@ -87,7 +87,7 @@ def get_parameters_gui():
     tk.Label(frame, text="Файл с данными:").grid(row=1, column=0, sticky="w")
 
     filename_var = tk.StringVar()
-    filename_var.set("0DNA500bp.txt")  # Значение по умолчанию
+    filename_var.set("N2_DNA5000_plus_300mV_part1.txt")  # Значение по умолчанию
 
     filename_entry = tk.Entry(frame, textvariable=filename_var, width=25)
     filename_entry.grid(row=1, column=1, padx=5)
@@ -127,7 +127,7 @@ def get_parameters_gui():
 
     tk.Label(frame, text="Points of Window").grid(row=7, column=0, sticky="w")
     window_length = tk.Entry(frame, width=15)
-    window_length.insert(0, "8000")
+    window_length.insert(0, "2501")
     window_length.grid(row=7, column=1)
 
     tk.Label(frame, text="polyorder").grid(row=8, column=0, sticky="w")
@@ -173,10 +173,11 @@ def get_parameters_gui():
     tk.Label(frame, text="Адаптивный триггер?").grid(row=17, column=0, sticky="w")
     adaptive_trigger_var = tk.IntVar()
     tk.Checkbutton(frame, variable=adaptive_trigger_var, onvalue=1, offvalue=0).grid(row=17, column=1, sticky="w")
+    adaptive_trigger_var.set(1)
 
     tk.Label(frame, text="Взвешивающий коэфф. (1.0-3.0):").grid(row=18, column=0, sticky="w")
     entry_weight_coeff = tk.Entry(frame, width=15)
-    entry_weight_coeff.insert(0, "1.0")
+    entry_weight_coeff.insert(0, "1.5")
     entry_weight_coeff.grid(row=18, column=1)
 
     tk.Button(frame, text="Run analysis", command=on_run, width=20)\
@@ -209,29 +210,37 @@ def get_parameters_gui():
     )
 filename, fs_khz, t_start, t_end, k, window_length, polyorder, a, subsample, event_buffer, METOD, positive_events, save_full_signal, adaptive_trigger, weight_coeff = get_parameters_gui()
 
+print('Файл для анализа:', filename)
+
 fs = fs_khz * 1e3           # Гц
 dt = 1.0 / fs               # шаг времени (с)
 window = 200
-symmetry_ratio = 0.9
-
+symmetry_ratio = 0.5
 
 with open(filename, 'r') as f:
-    data = [line.strip().replace(',', '.') for line in f]
+    lines = f.readlines()
 
-values = np.array(data, dtype=float)
+n_points_total = len(lines)
 
-
-n_points = len(values)
-time = np.arange(n_points) * dt
-
+# время для всего файла
+time_total = np.arange(n_points_total) * dt
 
 if t_end < 0:
-    t_end = time[-1]
+    t_end = time_total[-1]
 
-mask = (time >= t_start) & (time <= t_end)
+mask = (time_total >= t_start) & (time_total <= t_end)
 
-time = time[mask]
-values = values[mask]
+# берем только нужные строки
+selected_lines = np.array(lines, dtype=object)[mask]
+
+# только теперь заменяем запятые
+values = np.array(
+    [line.strip().replace(',', '.') for line in selected_lines],
+    dtype=float
+)
+
+# формируем время уже для выбранного диапазона
+time = time_total[mask]
 
 n_points = len(values)
 
@@ -387,7 +396,7 @@ if METOD in ["SG", "EMA"]:
                  delta_I[seg_start:seg_end + 1],
                  color='gray',
                  alpha=0.4,
-                 linewidth=0.5)
+                 linewidth=1)
     for start, end in filtered_events:
         seg_start = max(0, start - event_buffer)
         seg_end = min(n_points - 1, end + event_buffer)
@@ -397,8 +406,8 @@ if METOD in ["SG", "EMA"]:
         event_mean = np.mean(event_segment)
 
         if event_mean < 0:  # Отрицательное событие - синий
-            color = 'blue'
-            alpha = 0.2
+            color = 'pink'
+            alpha = 0.1
         else:  # Положительное событие - красный
             color = 'red'
             alpha = 0.2
@@ -418,44 +427,77 @@ if METOD in ["SG", "EMA"]:
 
         ]
 
-    #plt.axhline(trigger_line, color='blue', linestyle='--')
-    #plt.axhline(trigger, color='blue', linestyle='--')
-#
-# if METOD == "EMA":
-#
-#     for start, end in ema_filtered_events:
-#         seg_start = max(0, start - event_buffer)
-#         seg_end = min(n_points - 1, end + event_buffer)
-#
-#         # Определяем знак события
-#         event_segment = ema_delta_I[start:end + 1]
-#         event_mean = np.mean(event_segment)
-#
-#         if event_mean < 0:  # Отрицательное событие - фиолетовый
-#             color = 'purple'
-#             alpha = 0.2
-#         else:  # Положительное событие - оранжевый
-#             color = 'orange'
-#             alpha = 0.2
-#
-#         # Область события
-#         plt.axvspan(time[start], time[end], color=color, alpha=alpha)
-#
-#         # Полный сигнал вокруг события
-#         plt.plot(time[seg_start:seg_end + 1], ema_delta_I[seg_start:seg_end + 1],
-#                  color=color, alpha=0.8, linewidth=0.8)
-#         legend_elements = [
-#             Patch(facecolor='purple', alpha=0.3, label='EMA отрицательные'),
-#             Patch(facecolor='orange', alpha=0.3, label='EMA положительные'),
-#             Line2D([0], [0], color='red', linestyle='--', label=f'Trigger EMA = {ema_trigger_line:.6f}'),
-#             Line2D([0], [0], color='yellow', linestyle='-', label=f'EMA (каждая {subsample}-я точка)')
-#
-#         ]
-#
-#     plt.axhline(ema_trigger_line, color='red', linestyle='--')
-#     plt.axhline(ema_trigger, color='red', linestyle='--')
+else:  # SG и EMA
 
-if METOD in ["SG", "EMA"]:
+    for start, end in raw_events:
+        seg_start = max(0, start - event_buffer)
+        seg_end = min(n_points - 1, end + event_buffer)
+
+        plt.axvspan(time[start], time[end],
+                    color='gray',
+                    alpha=0.15)
+
+        plt.plot(time[seg_start:seg_end + 1],
+                 delta_I[seg_start:seg_end + 1],
+                 color='gray',
+                 alpha=0.4,
+                 linewidth=0.5)
+
+    # SG события (синие)
+    for start, end in filtered_events:
+        seg_start = max(0, start - event_buffer)
+        seg_end = min(n_points - 1, end + event_buffer)
+
+        plt.axvspan(time[start], time[end],
+                    color='blue',
+                    alpha=0.2)
+
+        plt.plot(time[seg_start:seg_end + 1],
+                 delta_I[seg_start:seg_end + 1],
+                 color='blue',
+                 alpha=0.8,
+                 linewidth=0.8)
+
+    # EMA события (красные)
+
+    for start, end in ema_raw_events:
+        seg_start = max(0, start - event_buffer)
+        seg_end = min(n_points - 1, end + event_buffer)
+
+        plt.axvspan(time[start], time[end],
+                    color='gray',
+                    alpha=0.15)
+
+        plt.plot(time[seg_start:seg_end + 1],
+                 ema_delta_I[seg_start:seg_end + 1],
+                 color='gray',
+                 alpha=0.4,
+                 linewidth=0.5)
+
+    for start, end in ema_filtered_events:
+        seg_start = max(0, start - event_buffer)
+        seg_end = min(n_points - 1, end + event_buffer)
+
+        plt.axvspan(time[start], time[end],
+                    color='red',
+                    alpha=0.2)
+
+        plt.plot(time[seg_start:seg_end + 1],
+                 ema_delta_I[seg_start:seg_end + 1],
+                 color='red',
+                 alpha=0.8,
+                 linewidth=0.8)
+
+    legend_elements = [
+        Patch(facecolor='blue', alpha=0.3, label='События SG'),
+        Patch(facecolor='red', alpha=0.3, label='События EMA'),
+        Line2D([0], [0], color='lightblue', label='SG сигнал'),
+        Line2D([0], [0], color='yellow', label='EMA сигнал')
+    ]
+
+
+
+if METOD in ["SG", "EMA","SG и EMA"]:
     # Сначала EMA события
     for start, end in filtered_events:
         seg_start = max(0, start - event_buffer)
@@ -566,59 +608,55 @@ plt.grid(True, which='major', alpha=1)
 plt.grid(True, which='minor', alpha=0.2)
 
 # =========================
-# ОКНО НАВИГАЦИИ (работает параллельно с графиком)
-# =========================
-
-# =========================
 # ОКНО НАВИГАЦИИ (стабильная версия)
 # =========================
-#
-# fig = plt.gcf()
-# ax = plt.gca()
-#
-# nav_root = tk.Tk()
-# nav_root.title("Навигация по графику")
-# nav_root.geometry("260x200")
-# nav_root.resizable(False, False)
-#
-# tk.Label(nav_root, text="Время от (с)").grid(row=0, column=0)
-# entry_xmin = tk.Entry(nav_root, width=12)
-# entry_xmin.grid(row=0, column=1)
-#
-# tk.Label(nav_root, text="Врема до (с)").grid(row=1, column=0)
-# entry_xmax = tk.Entry(nav_root, width=12)
-# entry_xmax.grid(row=1, column=1)
-#
-# tk.Label(nav_root, text="Ток min").grid(row=2, column=0)
-# entry_ymin = tk.Entry(nav_root, width=12)
-# entry_ymin.grid(row=2, column=1)
-#
-# tk.Label(nav_root, text="Ток max").grid(row=3, column=0)
-# entry_ymax = tk.Entry(nav_root, width=12)
-# entry_ymax.grid(row=3, column=1)
-#
-# def apply_limits():
-#     try:
-#         xmin = float(entry_xmin.get())
-#         xmax = float(entry_xmax.get())
-#         ymin = float(entry_ymin.get())
-#         ymax = float(entry_ymax.get())
-#
-#         ax.set_xlim(xmin, xmax)
-#         ax.set_ylim(ymin, ymax)
-#         fig.canvas.draw_idle()
-#
-#     except ValueError:
-#         messagebox.showerror("Ошибка", "Введите числовые значения")
-#
-# tk.Button(nav_root, text="Применить", command=apply_limits)\
-#     .grid(row=4, column=0, columnspan=2, pady=10)
-# nav_root.bind('<Return>', lambda event: apply_limits())
-#
-# plt.show(block=False)
-# nav_root.mainloop()
 
+fig = plt.gcf()
+ax = plt.gca()
 
+nav_root = tk.Tk()
+nav_root.title("Навигация по графику")
+nav_root.geometry("260x200")
+nav_root.resizable(False, False)
+
+tk.Label(nav_root, text="Время от (с)").grid(row=0, column=0)
+entry_xmin = tk.Entry(nav_root, width=12)
+entry_xmin.grid(row=0, column=1)
+
+tk.Label(nav_root, text="Врема до (с)").grid(row=1, column=0)
+entry_xmax = tk.Entry(nav_root, width=12)
+entry_xmax.grid(row=1, column=1)
+
+tk.Label(nav_root, text="Ток min").grid(row=2, column=0)
+entry_ymin = tk.Entry(nav_root, width=12)
+entry_ymin.grid(row=2, column=1)
+
+tk.Label(nav_root, text="Ток max").grid(row=3, column=0)
+entry_ymax = tk.Entry(nav_root, width=12)
+entry_ymax.grid(row=3, column=1)
+
+def apply_limits():
+    try:
+        xmin = float(entry_xmin.get())
+        xmax = float(entry_xmax.get())
+        ymin = float(entry_ymin.get())
+        ymax = float(entry_ymax.get())
+
+        ax.set_xlim(xmin, xmax)
+        ax.set_ylim(ymin, ymax)
+        fig.canvas.draw_idle()
+
+    except ValueError:
+        messagebox.showerror("Ошибка", "Введите числовые значения")
+
+tk.Button(nav_root, text="Применить", command=apply_limits)\
+    .grid(row=4, column=0, columnspan=2, pady=10)
+nav_root.bind('<Return>', lambda event: apply_limits())
+
+plt.show(block=False)
+nav_root.mainloop()
+
+plt.show()
 params_df = pd.DataFrame({
     'Параметр': [
         'Данные',
@@ -631,7 +669,9 @@ params_df = pd.DataFrame({
         'Коэффициент a',
         "symetry ratio",
         "окно для фильтрации",
-        "среднее по току"
+        "среднее по току",
+        "адаптивный триггер?",
+        "Весовой коэф"
     ],
     'Значение': [
         filename,
@@ -644,7 +684,9 @@ params_df = pd.DataFrame({
         a,
         symmetry_ratio,
         window,
-        np.mean(values)
+        np.mean(values),
+        adaptive_trigger,
+        weight_coeff
     ]
 })
 
@@ -661,7 +703,7 @@ if METOD in ["SG", "EMA"]:
 
     # 1 файл (сводка)
     save_summary_excel(
-        f"{filename}_{METOD}_{fs_khz}kHz_{len(filtered_events)}events.xlsx",
+        f"{filename}_{METOD}_{fs_khz}kHz_summary.xlsx",
         params_df,
         {f"События {METOD}": table}
 

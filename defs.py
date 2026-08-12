@@ -51,6 +51,7 @@ def calculate_detecting_down(delta_I, trigger_line, n_points):
 def calculate_detecting_all(delta_I, trigger_line, trigger, n_points):
     # Условие: сигнал вне диапазона [trigger_line, trigger_high]
     # trigger_line - отрицательное значение (нижняя граница)
+    # trigger_line - отрицательное значение (нижняя граница)
     # trigger - положительное значение (верхняя граница)
     outside_range = (delta_I < trigger_line) | (delta_I > trigger)
     raw_events = []
@@ -110,23 +111,49 @@ def filtering(raw_events, window, symmetry_ratio, n_points, delta_I, trigger_lin
 
     # --- 2. РАСШИРЕНИЕ ДО BASELINE ---
     expanded_events = []
+    expanded_events = []
+
     for start, end in raw_events:
-        event_segment = delta_I[start:end + 1]
-        event_mean = np.mean(event_segment)
+
+        # Окрестность для оценки baseline
+        w_start = max(0, start - window)
+        w_end = min(n_points - 1, end + window)
+
+        segment = delta_I[w_start:w_end + 1]
+
+        left_ctx = segment[:start - w_start]
+        right_ctx = segment[end - w_start + 1:]
+
+        context = np.concatenate([left_ctx, right_ctx])
+
+        buffer_mean = np.mean(context) if len(context) > 0 else 0
+
+        event_mean = np.mean(delta_I[start:end + 1] - buffer_mean)
+
         if event_mean < 0:
+
             i = start
-            while i > 0 and delta_I[i] < 0: i -= 1
+            while i > 0 and delta_I[i] < buffer_mean:
+                i -= 1
             new_start = i + 1
+
             i = end
-            while i < n_points - 1 and delta_I[i] < 0: i += 1
+            while i < n_points - 1 and delta_I[i] < buffer_mean:
+                i += 1
             new_end = i - 1
+
         else:
+
             i = start
-            while i > 0 and delta_I[i] > 0: i -= 1
+            while i > 0 and delta_I[i] > buffer_mean:
+                i -= 1
             new_start = i + 1
+
             i = end
-            while i < n_points - 1 and delta_I[i] > 0: i += 1
+            while i < n_points - 1 and delta_I[i] > buffer_mean:
+                i += 1
             new_end = i - 1
+
         expanded_events.append((new_start, new_end))
 
     # --- 3. ВЗВЕШЕННАЯ ПРОВЕРКА СИММЕТРИИ ---
@@ -182,7 +209,7 @@ def filtering(raw_events, window, symmetry_ratio, n_points, delta_I, trigger_lin
     events = sorted(list(set(filtered_events)))
 
     # --- 4. МИНИМАЛЬНАЯ ДЛИТЕЛЬНОСТЬ ---
-    min_duration_ms = 0.05
+    min_duration_ms = 0.3
     min_duration_points = int((min_duration_ms / 1000) / dt)
     events = [(s, e) for s, e in events if (e - s + 1) >= min_duration_points]
 
@@ -283,6 +310,7 @@ def calculation_both(values, k, positive_events, n_points, window, symmetry_rati
         ema_raw_events, window, symmetry_ratio, n_points, ema_delta_I, ema_trigger_line, ema_trigger, dt,
         weight_coeff=weight_coeff, adaptive_trigger=adaptive_trigger
     )
+    print(f"ДЛЯ EMA Событий после фильтрации: {len(ema_filtered_events)}")
 
     # SG часть
     m = savgol_filter(values, window_length, polyorder, mode="mirror")
@@ -299,6 +327,7 @@ def calculation_both(values, k, positive_events, n_points, window, symmetry_rati
         raw_events, window, symmetry_ratio, n_points, delta_I, trigger_line, trigger, dt,
         weight_coeff=weight_coeff, adaptive_trigger=adaptive_trigger
     )
+    print(f"ДЛЯ SG Событий после фильтрации: {len(filtered_events)}")
 
     return (np.std(delta_I), trigger_line, trigger, raw_events, filtered_events, negative_count, positive_count,
             np.std(ema_delta_I), ema_trigger_line, ema_trigger, ema_raw_events, ema_filtered_events, ema_negative_count, ema_positive_count, delta_I, ema_delta_I)
