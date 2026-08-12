@@ -690,12 +690,20 @@ params_df = pd.DataFrame({
     ]
 })
 
+empty_row = pd.DataFrame([[""] * len(params_df.columns)], columns=params_df.columns)
+params_df = pd.concat([empty_row, params_df], ignore_index=True)
+
 table = pd.DataFrame(events_table_sorted)
 table.columns = ['№', 'Время начала (с)', 'Длительность (мс)', 'Амплитуда, pA']
+empty_row = pd.DataFrame([[""] * len(table.columns)], columns=table.columns)
+table = pd.concat([empty_row, table], ignore_index=True)
+
 
 if METOD == "SG и EMA":
     ema_table = pd.DataFrame(ema_events_table_sorted)
     ema_table.columns = ['№', 'Время начала (с)', 'Длительность (мс)', 'Амплитуда, pA']
+    empty_row = pd.DataFrame([[""] * len(ema_table.columns)], columns=ema_table.columns)
+    ema_table = pd.concat([empty_row, ema_table], ignore_index=True)
 
 if METOD in ["SG", "EMA"]:
 

@@ -375,6 +375,8 @@ def save_raw_events_excel(filename, params_df, data_dict, time, event_buffer, n_
 
         for sheet_name, (events, signal) in data_dict.items():
             df = create_event_table(events, signal)
+            empty_row = pd.DataFrame([[""] * len(df.columns)], columns=df.columns)
+            df = pd.concat([empty_row, df], ignore_index=True)
             df.to_excel(writer, sheet_name=sheet_name, index=False)
 
 
@@ -390,6 +392,7 @@ def save_full_signal_csv(filename, time, delta_I, ema_delta_I=None):
     with open(sg_filename, 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
         writer.writerow(['Time (s)', 'Delta_I_SG (pA)'])
+        writer.writerow(["", ""])
         for t, d in zip(time, delta_I):
             writer.writerow([t, d])
     print(f"Сохранено: {sg_filename}")
@@ -400,6 +403,7 @@ def save_full_signal_csv(filename, time, delta_I, ema_delta_I=None):
         with open(ema_filename, 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
             writer.writerow(['Time (s)', 'Delta_I_EMA (pA)'])
+            writer.writerow(["", ""])
             for t, d in zip(time, ema_delta_I):
                 writer.writerow([t, d])
         print(f"Сохранено: {ema_filename}")
